@@ -5,6 +5,17 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import random
+import os
+
+import data_fetcher as dfetch
+
+# 尝试从 .env 读取 FRED API key (可选, 用于 GDP/巴菲特指标自动化)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+DEFAULT_FRED_KEY = os.environ.get("FRED_API_KEY", "")
 
 # ==========================================
 # 1. 页面配置与样式 (UI Configuration)
@@ -168,6 +179,16 @@ def get_market_data(ticker="VOO", proxy=None):
         return generate_mock_data(ticker)
 
 
+@st.cache_data(ttl=1800, show_spinner="🔄 正在自动获取宏观数据...")
+def get_auto_data(ticker, fred_key, proxy):
+    """
+    一键获取所有可自动化的宏观/情绪数据 (带30分钟缓存)。
+    返回 dict, 每项含 ok/value/source/error。
+    """
+    key = fred_key.strip() if fred_key and fred_key.strip() else None
+    return dfetch.fetch_all(ticker=ticker, fred_api_key=key, proxy=proxy)
+
+
 # ==========================================
 # 3. 侧边栏：配置与输入
 # ==========================================
@@ -215,60 +236,149 @@ with st.sidebar.expander("🌐 网络连接设置", expanded=False):
     st.caption("无法连接Yahoo Finance时请填入代理，或留空使用**模拟演示模式**。")
     proxy_url = st.text_input("HTTP代理地址", placeholder="例如 http://127.0.0.1:7890")
 
+# --- 数据源自动化设置 ---
+with st.sidebar.expander("🔑 数据源自动化 (推荐配置)", expanded=True):
+    st.caption("填入免费 FRED API key 后，**GDP / 巴菲特指标**将自动更新。")
+    st.markdown("[📌 免费申请 FRED key (30秒)](https://fred.stlouisfed.org/docs/api/api_key.html)",
+                unsafe_allow_html=True)
+    fred_key_input = st.text_input(
+        "FRED API Key (可选)",
+        value=DEFAULT_FRED_KEY,
+        type="password",
+        help="申请免费key后粘贴于此。不提供则GDP/巴菲特指标回退为网页抓取或手动输入。"
+    )
+    auto_fetch = st.toggle("🔄 启用数据自动获取", value=True,
+                           help="关闭后所有指标回退为手动输入")
+    if st.button("♻️ 刷新所有数据", help="清除缓存并重新拉取全部数据源"):
+        st.cache_data.clear()
+        st.rerun()
+
 # --- 宏观数据输入 ---
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("1. 巴菲特指标 (Buffett Indicator)")
-st.sidebar.markdown("""
-[🔗 Wilshire 5000](https://sc.macromicro.me/series/616/wilshire5000) | [🔗 US GDP](https://www.macromicro.me/collections/2/us-gdp-relative/2/us-real-gdp)
-""", unsafe_allow_html=True)
 
-wilshire_5000 = st.sidebar.number_input("美股总市值 (Trillion $)", value=59.0, step=0.5)
-us_gdp = st.sidebar.number_input("美国 GDP (Trillion $)", value=29.0, step=0.1)
-buffett_ratio = (wilshire_5000 / us_gdp) * 100
-st.sidebar.caption(f"当前计算值: **{buffett_ratio:.1f}%**")
+# ============================================================
+# 自动获取所有宏观/情绪数据 (若启用)
+# ============================================================
+auto = {}
+if auto_fetch:
+    auto = get_auto_data(ticker_symbol, fred_key_input, proxy_url)
+else:
+    auto = {}
 
-st.sidebar.info("""
-**⚠️ 注意：GDP 数据通常每季度更新，存在滞后性。**
+
+def _auto_val(key, fallback):
+    """取自动值, 失败返回 fallback。返回 (value, source, is_auto)"""
+    item = auto.get(key)
+    if item and item.get("ok") and item.get("value") is not None:
+        return item["value"], item.get("source", "auto"), True
+    return fallback, None, False
+
+
+def _metric_block(title, link_md, key, manual_default, unit, fmt,
+                  step, info_md, help_text=""):
+    """
+    渲染一个'自动获取 + 手动覆盖'的指标配置块。
+    返回最终采用的数值 (自动优先, 用户可勾选手动覆盖)。
+    """
+    st.sidebar.subheader(title)
+    st.sidebar.markdown(link_md, unsafe_allow_html=True)
+
+    auto_value, source, is_auto = _auto_val(key, manual_default)
+
+    if is_auto:
+        st.sidebar.success(f"✅ 自动获取: **{auto_value:{fmt}}{unit}** ({source})")
+    else:
+        err = auto.get(key, {}).get("error", "未启用自动获取") if auto else "自动获取已关闭"
+        st.sidebar.warning(f"⚠️ 自动获取不可用 ({err[:40]})，请手动输入")
+
+    # 手动覆盖开关
+    override = st.sidebar.checkbox(
+        f"✏️ 手动校准此指标", key=f"ov_{key}", value=not is_auto,
+        help=help_text or "勾选后可手动输入，覆盖自动获取的值"
+    )
+
+    if override:
+        manual = st.sidebar.number_input(
+            f"{title.split('. ', 1)[-1]} 手动值",
+            value=float(auto_value), step=step, key=f"manual_{key}"
+        )
+        final_val = manual
+        st.sidebar.caption(f"当前使用: **手动输入 {manual:{fmt}}{unit}**")
+    else:
+        final_val = auto_value
+        st.sidebar.caption(f"当前使用: **自动 {auto_value:{fmt}}{unit}**")
+
+    st.sidebar.info(info_md)
+    return final_val
+
+
+# --- 1. 巴菲特指标 ---
+_buffett_info = """
 **📊 历史参考阈值:**
 * **历史平均 (1950-2023)**: ~100%
 * **近10年平均**: ~150% (低利率环境推高)
 * **2000年 泡沫峰值**: ~140%
 * **2021年 历史峰值**: ~200% (极度高危)
-""")
+* **当前自动获取**: 见上方 ✅ 数值
+"""
+buffett_ratio = _metric_block(
+    "1. 巴菲特指标 (Buffett Indicator)",
+    "[🔗 GuruFocus 实时值](https://www.gurufocus.com/stock-market-valuations.php) | [🔗 FRED](https://fred.stlouisfed.org)",
+    "buffett", 180.0, "%", ".1f", 1.0, _buffett_info,
+    help_text="巴菲特指标=美股总市值/GDP。自动源: gurufocus(免key) 或 FRED计算(需key)"
+)
 
-st.sidebar.subheader("2. 席勒市盈率 (Shiller PE)")
-st.sidebar.markdown("[🔗 Multpl Shiller PE](https://www.multpl.com/shiller-pe)", unsafe_allow_html=True)
-shiller_pe = st.sidebar.number_input("CAPE Ratio", value=40.0, step=0.1)
-st.sidebar.info("""
+# --- 2. 席勒市盈率 ---
+_shiller_info = """
 **📊 历史参考阈值:**
 * **历史平均**: ~17.0
 * **近10年平均**: ~30.0
 * **1929年 大萧条**: 30.0
 * **2000年 互联网泡沫**: 44.2 (历史最高)
 * **2021年 疫情后**: 38.6
-""")
-
-st.sidebar.subheader("3. 收益率曲线 (10Y-2Y)")
-st.sidebar.markdown("[🔗 CN.Investing 债券](https://cn.investing.com/rates-bonds/usa-government-bonds)",
-                    unsafe_allow_html=True)
-user_2y_yield = st.sidebar.number_input(
-    "2年期美债收益率 (%)",
-    value=4.20,
-    step=0.01,
-    help="输入2年期收益率，系统将自动对比10年期。"
+"""
+shiller_pe = _metric_block(
+    "2. 席勒市盈率 (Shiller PE)",
+    "[🔗 Multpl Shiller PE](https://www.multpl.com/shiller-pe)",
+    "shiller", 40.0, "", ".1f", 0.1, _shiller_info,
+    help_text="CAPE Ratio, 自动抓取自 multpl.com"
 )
-st.sidebar.info("""
+
+# --- 3. 收益率曲线 (2Y, 10Y由行情模块自动获取) ---
+_yield_info = """
 **📊 历史参考阈值:**
 * **正常状态**: +0.8% ~ +2.0%
 * **倒挂预警 (< 0%)**: 2000, 2007, 2019, 2022 均出现
 * **解挂风险 (倒挂后回升至 > 0%)**: 最危险时刻。
-""")
+"""
+user_2y_yield = _metric_block(
+    "3. 收益率曲线 (2Y收益率)",
+    "[🔗 CNBC US2Y](https://www.cnbc.com/quotes/US2Y) | [🔗 美债收益率](https://cn.investing.com/rates-bonds/usa-government-bonds)",
+    "us2y", 4.20, "%", ".2f", 0.01, _yield_info,
+    help_text="2年期美债收益率。自动源: CNBC(实时)，系统将自动对比10年期"
+)
+
+# --- 4. 恐慌与贪婪指数 ---
+_fg_info = "**📊 参考:** 极度贪婪 (>80) 往往是短期顶部信号；极度恐慌 (<20) 往往是底部机会。"
+fear_greed_auto, fg_source, fg_is_auto = _auto_val("fear_greed", 45)
 
 st.sidebar.subheader("4. 恐慌与贪婪指数")
-st.sidebar.markdown("[🔗 CNN Fear & Greed](https://edition.cnn.com/markets/fear-and-greed)", unsafe_allow_html=True)
-fear_greed = st.sidebar.slider("Fear & Greed Index (0-100)", 0, 100, 45)
-st.sidebar.caption("极度贪婪 (>80) 往往是短期顶部信号。")
+st.sidebar.markdown("[🔗 CNN Fear & Greed](https://edition.cnn.com/markets/fear-and-greed)",
+                    unsafe_allow_html=True)
+if fg_is_auto:
+    rating = auto.get("fear_greed", {}).get("rating", "")
+    st.sidebar.success(f"✅ 自动获取: **{fear_greed_auto}** ({rating}) [CNN]")
+else:
+    err = auto.get("fear_greed", {}).get("error", "未启用") if auto else "自动获取已关闭"
+    st.sidebar.warning(f"⚠️ 自动获取不可用 ({err[:40]})")
+fg_override = st.sidebar.checkbox("✏️ 手动校准此指标", key="ov_fg", value=not fg_is_auto)
+if fg_override:
+    fear_greed = st.sidebar.slider("Fear & Greed Index (0-100)", 0, 100, int(fear_greed_auto))
+else:
+    fear_greed = fear_greed_auto
+st.sidebar.caption(_fg_info)
+
 
 
 # ==========================================
@@ -429,16 +539,37 @@ def get_historical_benchmarks():
 # 获取数据
 df, price, sma200, yield_10y, is_mock = get_market_data(ticker_symbol, proxy=proxy_url)
 
+# 10Y 收益率: 优先用自动数据链中更优的来源 (CNBC/akshare 实时性更好)
+if auto and auto.get("us10y", {}).get("ok") and auto["us10y"].get("value") is not None:
+    yield_10y = auto["us10y"]["value"]
+    us10y_source = auto["us10y"].get("source", "auto")
+else:
+    us10y_source = "yfinance ^TNX"
+
 # --- UI: 标题区 ---
 st.title(f"🚨 Wall Street Quant: {ticker_symbol} 崩盘风险监测仪")
+
+# 数据源状态总览
+src_status = []
+if auto:
+    label_map = [("market", "行情"), ("us10y", "10Y"), ("us2y", "2Y"),
+                 ("buffett", "巴菲特"), ("shiller", "Shiller"), ("fear_greed", "恐慌指数")]
+    ok_cnt = sum(1 for k, _ in label_map if auto.get(k, {}).get("ok"))
+    total = len(label_map)
+    for k, name in label_map:
+        item = auto.get(k, {})
+        mark = "🟢" if item.get("ok") else "🔴"
+        src_status.append(f"{mark}{name}")
+    st.caption(f"数据源状态 ({ok_cnt}/{total} 自动成功): " + " · ".join(src_status))
 
 if is_mock:
     st.warning("⚠️ **演示模式**：无法连接数据源，当前使用模拟数据。")
 else:
-    st.success("✅ **实时连接**：数据源正常。")
+    st.success("✅ **实时连接**：行情数据源正常。")
 
 st.markdown(
-    f"**当前标的**: {ticker_symbol} | **最新价格**: ${price:.2f} | **10年期美债收益率**: {yield_10y:.2f}% (自动获取)")
+    f"**当前标的**: {ticker_symbol} | **最新价格**: ${price:.2f} | "
+    f"**10年期美债收益率**: {yield_10y:.2f}% ({us10y_source})")
 st.markdown("---")
 
 if df is not None:
