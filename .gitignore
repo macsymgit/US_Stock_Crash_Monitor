@@ -8,6 +8,9 @@ __pycache__/
 .venv/
 venv/
 
+# 运行时累积的个人风险评分历史
+risk_history.csv
+
 # 临时文件
 *.log
 streamlit_log.txt

@@ -18,6 +18,7 @@
       失败返回 None 由上层决定是否回退到手动输入。
 """
 
+import os
 import re
 import json
 import time
@@ -28,6 +29,29 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import random
+
+
+def generate_mock_market(ticker="VOO"):
+    """
+    生成逼真的模拟行情, 用于网络完全断开时的演示模式。
+    返回 (df, price, sma200, us10y)。
+    """
+    dates = pd.date_range(end=datetime.now(), periods=500, freq="B")
+    base_price = 500 if ticker == "QQQ" else 450
+    trend = np.linspace(0, 50, 500)
+    noise = np.random.normal(0, 5, 500).cumsum()
+    prices = base_price + trend + noise
+
+    df = pd.DataFrame(index=dates)
+    df["Open"] = prices + np.random.uniform(-2, 2, 500)
+    df["High"] = df["Open"] + np.random.uniform(0, 5, 500)
+    df["Low"] = df["Open"] - np.random.uniform(0, 5, 500)
+    df["Close"] = prices
+    df["SMA_200"] = df["Close"].rolling(window=200).mean()
+
+    return (df, float(df["Close"].iloc[-1]),
+            float(df["SMA_200"].iloc[-1]), 4.15 + random.uniform(-0.1, 0.1))
 
 # ----------------------------------------------------------------------------
 # 全局网络配置
@@ -101,6 +125,30 @@ def get_fred_gdp(api_key):
     """
     val, date = _fred_latest("GDP", api_key)
     return val / 1000.0, f"{date} (FRED)"      # 十亿 -> 万亿
+
+
+def get_fred_hy_spread(api_key, hist_years=5):
+    """
+    高收益债信用利差 (FRED 序列 BAMLH0A0HYM2, 单位: %, 日频)。
+    返回 (current_value, history_list, source)。
+    history_list 为最近 hist_years 年的历史利差, 用于分位数计算。
+    这是与股市自身指标正交的"聪明钱"信用信号, 崩盘前常领先1-2个月扩大。
+    """
+    limit = hist_years * 260 + 20     # 每年约260个交易日
+    url = (f"{_FRED_BASE}?series_id=BAMLH0A0HYM2&api_key={api_key}"
+           f"&file_type=json&sort_order=desc&limit={limit}")
+    raw = _http_get(url)
+    data = json.loads(raw)
+    vals = []
+    for obs in data.get("observations", []):
+        v = obs.get("value", ".")
+        if v not in (".", "", None):
+            vals.append(float(v))
+    if not vals:
+        raise ValueError("FRED 高收益债利差无数据")
+    current = vals[0]                  # desc序, 第一个是最新
+    date = data["observations"][0].get("date", "")
+    return current, vals, f"{date} (FRED)"
 
 
 def get_fred_market_cap(api_key):
@@ -322,18 +370,20 @@ def fetch_all(ticker="VOO", fred_api_key=None, proxy=None):
 
     result = {}
 
-    # --- 行情 + 10Y ---
+    # --- 行情 + 10Y (失败降级为模拟数据) ---
     try:
         df, price, sma200, y10 = get_market_data_yf(ticker)
         result["market"] = {"ok": True, "df": df, "price": price,
-                            "sma200": sma200, "source": "yfinance"}
+                            "sma200": sma200, "is_mock": False, "source": "yfinance"}
         if y10 is not None:
             result["us10y"] = {"ok": True, "value": y10, "source": "yfinance ^TNX"}
         else:
-            raise ValueError("yfinance 10Y为空")
+            result["us10y"] = {"ok": False, "value": None, "error": "yfinance 10Y为空"}
     except Exception as e:
-        result["market"] = {"ok": False, "value": None, "error": str(e)}
-        result["us10y"] = {"ok": False, "value": None, "error": str(e)}
+        mdf, mprice, msma, m10y = generate_mock_market(ticker)
+        result["market"] = {"ok": False, "df": mdf, "price": mprice, "sma200": msma,
+                            "is_mock": True, "error": str(e), "source": "模拟数据"}
+        result["us10y"] = {"ok": False, "value": m10y, "error": str(e), "source": "模拟数据"}
 
     # --- 2Y 收益率: CNBC -> akshare -> FRED 逐级降级 ---
     us2y = None
@@ -398,6 +448,17 @@ def fetch_all(ticker="VOO", fred_api_key=None, proxy=None):
                        "error": f"gurufocus失败({e1})"}
     result["buffett"] = buffett
 
+    # --- 高收益债信用利差 (崩盘预警的"聪明钱"信号, 需FRED key) ---
+    if fred_api_key:
+        try:
+            cur, hist, src = get_fred_hy_spread(fred_api_key)
+            result["credit"] = {"ok": True, "value": cur, "history": hist, "source": src}
+        except Exception as e:
+            result["credit"] = {"ok": False, "value": None, "history": None, "error": str(e)}
+    else:
+        result["credit"] = {"ok": False, "value": None, "history": None,
+                            "error": "未提供FRED key"}
+
     # --- Shiller PE ---
     try:
         v, src = get_shiller_pe()
@@ -414,6 +475,49 @@ def fetch_all(ticker="VOO", fred_api_key=None, proxy=None):
         result["fear_greed"] = {"ok": False, "value": None, "error": str(e)}
 
     return result
+
+
+# ============================================================================
+# 风险评分历史记录 (本地 CSV 累积, 用于绘制风险趋势图)
+# ============================================================================
+_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "risk_history.csv")
+
+
+def record_risk_score(ticker, score):
+    """
+    把当日某标的的风险评分追加到本地 CSV (同日覆盖, 跨日累积)。
+    每次运行记录一条, 长期累积形成风险趋势。
+    """
+    import csv
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = []
+    if os.path.exists(_HISTORY_FILE):
+        with open(_HISTORY_FILE, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+    header = ["date", "ticker", "score"]
+    # 移除今日同标的旧记录 (同日重复运行只保留最新)
+    data = [r for r in rows[1:] if not (len(r) >= 2 and r[0] == today and r[1] == ticker)] \
+        if len(rows) > 1 else []
+    data.append([today, ticker, f"{score:.1f}"])
+    with open(_HISTORY_FILE, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(data)
+
+
+def load_risk_history(ticker):
+    """
+    读取某标的的风险评分历史, 返回 DataFrame(date, score) 按日期升序。
+    无记录时返回空 DataFrame。
+    """
+    if not os.path.exists(_HISTORY_FILE):
+        return pd.DataFrame(columns=["date", "score"])
+    df = pd.read_csv(_HISTORY_FILE)
+    df = df[df["ticker"] == ticker][["date", "score"]].copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["score"] = pd.to_numeric(df["score"], errors="coerce")
+    return df.dropna().sort_values("date").reset_index(drop=True)
 
 
 # ============================================================================
