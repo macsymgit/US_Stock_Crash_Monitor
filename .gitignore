@@ -10,8 +10,11 @@ venv/
 
 # 运行时累积的个人风险评分历史
 risk_history.csv
+risk_history.csv.lock
+risk_history.csv.*.tmp
 
 # 临时文件
 *.log
 streamlit_log.txt
 .pytest_cache/
+.ruff_cache/
