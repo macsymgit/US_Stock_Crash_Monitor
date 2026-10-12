@@ -91,10 +91,28 @@ def _page_text(html):
     return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]*>", " ", html)))
 
 
-def _http_get(url, headers=None, timeout=15):
+def _http_get(url, headers=None, timeout=15, impersonate=None):
     """
     统一的 HTTP GET, 自动应用代理与 UA, 返回原始 bytes。失败抛异常。
+    impersonate: 浏览器名(如 "chrome"), 用于按TLS指纹拦截urllib的站点。
     """
+    if impersonate:
+        from curl_cffi import requests
+
+        # UA等请求头由curl_cffi按指纹生成，自带UA会与TLS指纹不一致。
+        # 空字符串代理让libcurl忽略环境变量代理，与下方urllib直连行为一致。
+        resp = requests.get(
+            url,
+            headers=headers,
+            impersonate=impersonate,
+            proxies={"all": _PROXY.get() or ""},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        if len(resp.content) > 5_000_000:
+            raise ValueError("数据源响应过大")
+        return resp.content
+
     h = {
         "User-Agent": _UA,
         "Accept": "application/json,text/html,application/xhtml+xml,*/*",
@@ -293,7 +311,7 @@ def get_shiller_pe():
 
 # ============================================================================
 # 4.5 GuruFocus —— 巴菲特指标 (Buffett Indicator, 总市值/GDP)
-#     业界标准口径, 免key直连, 已实机验证可解析。
+#     业界标准口径, 免key。Cloudflare按TLS指纹对urllib返回403, 需浏览器指纹。
 #     口径: 上市公司总市值 / GDP (基于Wilshire5000全市场)。
 # ============================================================================
 def get_buffett_indicator():
@@ -308,7 +326,7 @@ def get_buffett_indicator():
     本函数取第一个 (TMC/GDP 当前值), 与历史 2000/2008/2021 阈值口径一致。
     """
     url = "https://www.gurufocus.com/stock-market-valuations.php"
-    raw = _http_get(url, timeout=20)
+    raw = _http_get(url, timeout=20, impersonate="chrome")
     html = _page_text(raw.decode("utf-8", errors="ignore"))
 
     # 匹配 "Total Market ... XX.X% ..." 结构

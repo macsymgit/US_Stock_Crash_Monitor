@@ -165,6 +165,13 @@ def test_html_values_with_tags_are_parsed(monkeypatch):
     assert fetcher.get_buffett_indicator()[0] == 232.9
 
 
+def test_buffett_fetch_uses_browser_fingerprint(monkeypatch):
+    request = Mock(return_value=b"Total Market Cap is 232.9% of GDP")
+    monkeypatch.setattr(fetcher, "_http_get", request)
+    fetcher.get_buffett_indicator()
+    assert request.call_args.kwargs["impersonate"] == "chrome"
+
+
 def test_fred_proxy_is_not_used_as_buffett_score(monkeypatch):
     monkeypatch.setattr(fetcher, "get_buffett_indicator", fail)
     monkeypatch.setattr(fetcher, "get_fred_gdp", lambda *args: (30, "2026-04-01 (FRED)"))
