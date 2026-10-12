@@ -1,0 +1,15 @@
+services:
+  monitor:
+    build: .
+    ports:
+      - "8082:8501"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Windows 挂载目录收不到 inotify 事件，改用轮询才能热更新
+      STREAMLIT_SERVER_FILE_WATCHER_TYPE: poll
+    volumes:
+      # 代码热更新 + risk_history.csv 持久化
+      - .:/app
+    restart: unless-stopped
