@@ -143,6 +143,9 @@ python data_fetcher.py
 
 欢迎提交问题或改进。报告问题时附上复现步骤、预期与实际行为、依赖版本；提交代码前运行测试与静态检查。请勿将密钥写入Issue、日志或提交。
 
+
+提交时请使用GitHub提供的 `noreply` 匿名邮箱，并在 [GitHub邮件设置](https://github.com/settings/emails) 开启邮箱隐私和阻止暴露私人邮箱的推送。
+
 ## 品牌资源
 
 Logo将雷达环与市场折线结合，表达持续观察市场信号。图像位于 [assets/logo.png](assets/logo.png)，设计提示词和使用说明见 [品牌文档](assets/BRAND.md)。

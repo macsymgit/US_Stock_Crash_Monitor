@@ -122,6 +122,9 @@ Possible next steps include point-in-time backtesting, separate drawdown-stress 
 
 Bug reports and improvements are welcome. Include the observed behavior, reproduction steps, and dependency versions. Keep credentials out of issues and commits; run tests and lint before submitting a change.
 
+
+Use your GitHub-provided `noreply` address for commit author and committer metadata. Enable email privacy and private-email push blocking in [GitHub email settings](https://github.com/settings/emails).
+
 ## Brand asset
 
 The radar and market-line logo represents monitoring changing market signals. It is generated artwork stored at [assets/logo.png](assets/logo.png); its prompt and usage notes are in [the brand document](assets/BRAND.md).
