@@ -2,7 +2,7 @@ services:
   monitor:
     build: .
     ports:
-      - "8082:8501"
+      - "${MONITOR_BIND:-0.0.0.0}:8082:8501"
     env_file:
       - path: .env
         required: false
@@ -12,4 +12,20 @@ services:
     volumes:
       # 代码热更新 + risk_history.csv 持久化
       - .:/app
+    restart: unless-stopped
+
+  notifier:
+    build: .
+    command: ["python", "notifier.py"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # 与monitor共享 risk_history.csv
+      - .:/app
+    healthcheck:
+      # 镜像自带的健康检查探测8501，此服务没有Web端口
+      disable: true
     restart: unless-stopped

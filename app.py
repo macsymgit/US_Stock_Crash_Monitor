@@ -163,24 +163,12 @@ with settings_popover, st.expander("手动校准", expanded=False):
 
 is_mock = market.get("is_mock", True)
 frame = market.get("df")
-factor_inputs = {
-    "buffett": selected["buffett"],
-    "shiller": selected["shiller"],
-    "hy_oas": selected["credit"],
-    "us_10y": selected["us10y"],
-    "us_2y": selected["us2y"],
-    "price": None if is_mock else market.get("price"),
-    "sma200": None if is_mock else market.get("sma200"),
-    "fear": selected["fear_greed"],
-}
+factor_inputs = risk_model.build_factor_inputs(selected, market)
 hy_history = auto.get("credit", {}).get("history")
 score, details = risk_model.calculate_risk(factor_inputs, user_weights, hy_history=hy_history)
 meta = details["_meta"]
 provisional = is_mock or bool(manual_sources) or meta["coverage"] < 0.999999
-credit_method = (
-    "percentile" if len(risk_model.credit_history_values(hy_history)) > 20 else "absolute"
-)
-profile = risk_history.scoring_profile(user_weights, credit_method)
+profile = risk_history.scoring_profile(user_weights, risk_model.credit_method(hy_history))
 
 if sum(user_weights.values()) == 0:
     st.info("所有权重均为0，已使用默认权重。下方显示实际生效的权重。")

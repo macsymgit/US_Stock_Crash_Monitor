@@ -15,7 +15,8 @@ python -m pytest -q                             # all tests (testpaths/pythonpat
 python -m pytest tests/test_risk_model.py::<test_name> -q   # single test
 python -m ruff check .                          # line-length 100, py310 target
 python data_fetcher.py                          # live probe of every data source (reads FRED_API_KEY from .env)
-docker compose up --build                       # serves on host port 8082, mounts repo for hot reload
+python notifier.py --now                        # one scan now → Telegram (needs TELEGRAM_BOT_TOKEN/CHAT_ID)
+docker compose up --build                       # dashboard on host port 8082 + notifier service; mounts repo
 ```
 
 `FRED_API_KEY` is optional and read from `.env` next to `app.py` (see `.env.example`). Without it, credit spread stays missing.
@@ -28,6 +29,7 @@ Data flows one way: `data_fetcher` → `app` (caching + inputs) → `risk_model`
 - **`app.py`** — the whole Streamlit script (three pages via sidebar radio). Market and macro data have separate `st.cache_data` caches (30 min TTL). Missing readings stay missing; manual values apply only when the per-factor "校准" override checkbox is enabled. Mock prices are excluded from technical scoring. A score is written to history only when data is real, all enabled factors are present, and no manual overrides are used (`provisional` flag).
 - **`risk_model.py`** — pure scoring, no I/O. `calculate_risk(inputs, weights, hy_history)` returns `(score | None, details)`; `details["_meta"]` carries coverage, effective weights, contributions, redline floor, resonance boost, and cap adjustment — the UI renders contributions from this, so score and explanation must come from the same call. Zero-weight factors are fully disabled (no score, resonance, or floor); missing factors are dropped and remaining weights renormalized. `HISTORICAL_SCENARIOS` are constructed approximations, not backtests.
 - **`risk_history.py`** — CSV store (`risk_history.csv`, gitignored) keyed by market observation date, ticker, `MODEL_VERSION`, and a `scoring_profile` string (normalized weights + credit method). Uses thread lock + file lock + atomic temp-file replace. Trends only show rows matching the current profile; legacy rows are kept in the file.
+- **`notifier.py`** — headless scheduler (compose service `notifier`): weekdays at `NOTIFY_TIME` (default 10:00) America/New_York, fetches via `fetch_all`, scores with `DEFAULT_WEIGHTS`, records complete readings to history, sends a per-factor breakdown to Telegram (warning line at `HIGH_RISK_SCORE`). Shares `risk_model.build_factor_inputs` / `credit_method` with `app.py` so both produce identical scores and history profiles.
 - **`charts.py` / `ui_theme.py` / `assets/app.css` / `.streamlit/config.toml`** — light theme; palette constants live in `ui_theme.py`.
 
 ## Conventions and gotchas

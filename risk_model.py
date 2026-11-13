@@ -55,6 +55,26 @@ def normalize_weights(weights):
     return {k: v / total for k, v in values.items()}
 
 
+def build_factor_inputs(readings, market):
+    """把各指标读数映射为评分输入；演示行情不参与技术评分。app与notifier共用。"""
+    is_mock = market.get("is_mock", True)
+    return {
+        "buffett": readings.get("buffett"),
+        "shiller": readings.get("shiller"),
+        "hy_oas": readings.get("credit"),
+        "us_10y": readings.get("us10y"),
+        "us_2y": readings.get("us2y"),
+        "price": None if is_mock else market.get("price"),
+        "sma200": None if is_mock else market.get("sma200"),
+        "fear": readings.get("fear_greed"),
+    }
+
+
+def credit_method(history):
+    """历史样本足够时信用利差按分位评分，否则按绝对阈值；写入历史profile。"""
+    return "percentile" if len(credit_history_values(history)) > 20 else "absolute"
+
+
 def risk_band(score):
     """所有图表与文字共用的风险区间。"""
     if score >= HIGH_RISK_SCORE:

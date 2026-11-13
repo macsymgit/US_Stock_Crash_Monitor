@@ -56,6 +56,17 @@ python -m streamlit run app.py
 
 Open [the local dashboard](http://localhost:8501). Optionally copy `.env.example` to `.env` and configure `FRED_API_KEY` for high-yield credit history and Treasury fallback data. The app reads `.env` from its own directory; Git ignores this file.
 
+### Scheduled Telegram report
+
+With `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`, `notifier.py` scans once every weekday at 10:00 New York time (change with `NOTIFY_TIME=HH:MM` in `.env`) using the default weights and sends the score with a per-factor breakdown to Telegram. Scores of 80 or higher start with a high-risk warning. Complete readings are also written to the official history.
+
+```powershell
+python notifier.py --now   # scan and send once now, for testing
+docker compose up -d       # monitor dashboard + notifier scheduler
+```
+
+If the host sleeps through the scheduled time by more than 30 minutes, that day is skipped. Market holidays still send the last trading day's data. For a Linux server, see the [deploy guide](docs/DEPLOY.md).
+
 ## v1.4 changes
 
 - Missing readings stay missing. Prefilled manual values are used only after explicitly enabling an override.
@@ -110,7 +121,7 @@ The source probe reads the FRED key from `.env`, avoiding command-line credentia
 
 ## Limits
 
-The price and sentiment rules emphasize overheating and do not fully measure ongoing drawdown stress. A low score cannot establish market safety. A flat positive yield curve cannot prove a previous inversion without history. Valuation, credit, and sentiment describe market-wide conditions rather than ETF-specific fundamentals. History accumulates only while the app runs with complete readings; scheduled collection and notifications have not been added.
+The price and sentiment rules emphasize overheating and do not fully measure ongoing drawdown stress. A low score cannot establish market safety. A flat positive yield curve cannot prove a previous inversion without history. Valuation, credit, and sentiment describe market-wide conditions rather than ETF-specific fundamentals. History accumulates while the app runs or the notifier scans with complete readings; the notifier has no trading calendar and still sends on market holidays.
 
 See the Chinese [review](docs/2026-10-10-project-review.md) and [feature options](docs/FEATURE_OPTIONS.md) for findings and proposed extensions.
 
@@ -118,7 +129,7 @@ For programming education and quantitative research. No investment advice. [MIT 
 
 ## Roadmap and contributing
 
-Possible next steps include point-in-time backtesting, separate drawdown-stress scoring, scheduled collection, yield-curve state history, better source resilience, and research exports. These are proposals, not shipped features; see the [feature options](docs/FEATURE_OPTIONS.md).
+Possible next steps include point-in-time backtesting, separate drawdown-stress scoring, yield-curve state history, better source resilience, and research exports. These are proposals, not shipped features; see the [feature options](docs/FEATURE_OPTIONS.md).
 
 Bug reports and improvements are welcome. Include the observed behavior, reproduction steps, and dependency versions. Keep credentials out of issues and commits; run tests and lint before submitting a change.
 

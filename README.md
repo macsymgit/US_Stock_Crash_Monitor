@@ -58,6 +58,17 @@ python -m streamlit run app.py
 
 可选：复制 `.env.example` 为 `.env`，填入 `FRED_API_KEY`。密钥用于获取高收益债利差及历史序列、美债备用数据；不配置时信用因子保持缺失，可手动输入或将权重设为零。应用从自身目录读取 `.env`，文件已被 Git 忽略。
 
+### Telegram 定时推送
+
+在 `.env` 填入 `TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_CHAT_ID` 后，`notifier.py` 在美东时间每个工作日 10:00（可用 `.env` 的 `NOTIFY_TIME=HH:MM` 修改）按默认权重扫描一次，把评分与逐因子说明发送到 Telegram；评分 ≥80 时首行显示高风险警告。读数完整时同时写入正式历史。
+
+```powershell
+python notifier.py --now   # 立即扫描并发送一次，用于测试
+docker compose up -d       # monitor 面板 + notifier 定时服务
+```
+
+主机休眠错过计划时间超过 30 分钟则跳过当天，不补发；美股休市日照常发送上一交易日数据。Linux 服务器部署见 [部署指南](docs/DEPLOY.md)。
+
 ## v1.4 优化
 
 - 缺失指标保持缺失；预设值只用于手动输入的起始值，不会自动参与评分。
@@ -108,6 +119,7 @@ GuruFocus 失败时，可用 FRED `NCBEILQ027S` 与同季度 GDP 计算**非金�
 | `data_fetcher.py` | 外部请求、代理隔离、并发与备用链 |
 | `risk_model.py` | 评分、权重归一化、覆盖率、贡献、近似历史情景 |
 | `risk_history.py` | 历史配置标识、锁、原子写入与旧文件兼容 |
+| `notifier.py` | 工作日定时扫描与 Telegram 推送 |
 | `charts.py` / `ui_theme.py` | 行情图与统一浅色图表样式 |
 | `tests/` | 模型、数据源、历史持久化和面板交互回归测试 |
 
@@ -131,7 +143,7 @@ python data_fetcher.py
 - 正利差的小幅平坦区间仍采用原有经验分数；当前快照无法证明此前曾倒挂。
 - 当前压力对比统一使用信用绝对阈值，可能与主仪表盘的历史分位数评分不同。
 - 监测标的固定为VOO；估值、信用与情绪反映全市场背景，不是ETF独有指标。
-- 历史只能在应用被打开且数据完整时积累，暂未增加后台采集或通知。
+- 历史在面板打开或 notifier 定时扫描且数据完整时积累；推送不含交易日历，休市日照常发送。
 
 [待选功能清单](docs/FEATURE_OPTIONS.md) 给出了回测、双风险评分、定时监测和数据源容灾等扩展方案，选择后再实现。
 
@@ -139,7 +151,7 @@ python data_fetcher.py
 
 ## 路线与贡献
 
-下一步可选择真实回测、下跌压力评分、定时采集、收益率曲线状态、数据源容灾或研究导出。这些为待选方案，尚未实现，详见 [功能清单](docs/FEATURE_OPTIONS.md) 与 [界面设计说明](docs/UI_REDESIGN.md)。
+下一步可选择真实回测、下跌压力评分、收益率曲线状态、数据源容灾或研究导出。这些为待选方案，尚未实现，详见 [功能清单](docs/FEATURE_OPTIONS.md) 与 [界面设计说明](docs/UI_REDESIGN.md)。
 
 欢迎提交问题或改进。报告问题时附上复现步骤、预期与实际行为、依赖版本；提交代码前运行测试与静态检查。请勿将密钥写入Issue、日志或提交。
 
