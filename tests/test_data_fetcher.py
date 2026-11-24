@@ -165,6 +165,22 @@ def test_html_values_with_tags_are_parsed(monkeypatch):
     assert fetcher.get_buffett_indicator()[0] == 232.9
 
 
+def test_shiller_falls_back_to_gurufocus(monkeypatch):
+    def fake_get(url, **kw):
+        if "multpl" in url:
+            raise TimeoutError("timed out")
+        assert kw["impersonate"] == "chrome"
+        return b"Shiller PE: How to Know ... Shiller PE: <b>36.9</b> ( -1.21%)"
+
+    monkeypatch.setattr(fetcher, "_http_get", fake_get)
+    result = fetcher._fetch_shiller()["shiller"]
+    assert result["ok"] and result["value"] == 36.9 and result["source"] == "gurufocus.com"
+
+    monkeypatch.setattr(fetcher, "get_gurufocus_shiller_pe", fail)
+    result = fetcher._fetch_shiller()["shiller"]
+    assert not result["ok"] and "timed out" in result["error"]
+
+
 def test_buffett_fetch_uses_browser_fingerprint(monkeypatch):
     request = Mock(return_value=b"Total Market Cap is 232.9% of GDP")
     monkeypatch.setattr(fetcher, "_http_get", request)

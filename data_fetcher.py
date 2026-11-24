@@ -309,6 +309,19 @@ def get_shiller_pe():
     raise ValueError("multpl Shiller PE 解析失败")
 
 
+def get_gurufocus_shiller_pe():
+    """
+    备用源: gurufocus.com 席勒市盈率, 页面含 "Shiller PE: 36.9 ( -1.21%)"。
+    与巴菲特指标同站, 同样需浏览器TLS指纹。返回 (pe_float, 'gurufocus.com')。
+    """
+    raw = _http_get("https://www.gurufocus.com/shiller-PE.php", timeout=20, impersonate="chrome")
+    text = _page_text(raw.decode("utf-8", errors="ignore"))
+    m = re.search(r"Shiller PE:\s*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    if not m:
+        raise ValueError("gurufocus Shiller PE 解析失败")
+    return _value(m.group(1), 1, 150), "gurufocus.com"
+
+
 # ============================================================================
 # 4.5 GuruFocus —— 巴菲特指标 (Buffett Indicator, 总市值/GDP)
 #     业界标准口径, 免key。Cloudflare按TLS指纹对urllib返回403, 需浏览器指纹。
@@ -520,11 +533,15 @@ def _fetch_credit(fred_api_key):
 
 
 def _fetch_shiller():
-    try:
-        value, source = get_shiller_pe()
-        return {"shiller": {"ok": True, "value": _value(value, 1, 150), "source": source}}
-    except Exception as error:
-        return {"shiller": _failed(error)}
+    """multpl → gurufocus 备用链。"""
+    errors = []
+    for getter in (get_shiller_pe, get_gurufocus_shiller_pe):
+        try:
+            value, source = getter()
+            return {"shiller": {"ok": True, "value": _value(value, 1, 150), "source": source}}
+        except Exception as error:
+            errors.append(_safe_error(error))
+    return {"shiller": _failed("; ".join(errors))}
 
 
 def _fetch_sentiment():
